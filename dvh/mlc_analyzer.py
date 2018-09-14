@@ -174,12 +174,10 @@ class Beam:
         :rtype: list
         """
         if len(self.gantry_angle) == len(self.control_point):  # catch non VMAT beams
-            gantry_delta = np.concatenate([[1], np.diff(self.gantry_angle)])  # leaf_travel[key][0] = 0
-            gantry_delta = np.concatenate(([gantry_delta, gantry_delta]))
+            gantry_delta = np.concatenate([[1], np.diff(self.gantry_angle)])  # leaf_travel[0] = 0
+            gantry_delta = np.concatenate(([gantry_delta, gantry_delta]))  # A and B side
 
-            leaf_travel = self.leaf_travel  # store to calculate only once
-
-            return [cp / gantry_delta[i] for i, cp in enumerate(leaf_travel)]
+            return [cp / gantry_delta[i] for i, cp in enumerate(self.leaf_travel)]
 
         return [0]
 
@@ -188,7 +186,7 @@ class Beam:
         Get stats for leaf travel or leaf speed (per degree) by control point or by beam.
         :param analysis_type: str in ['speed', 'travel']
         :param beam_stat: str in ['min', 'median', 'mean', 'max', 'std']
-        this is calculated across the entire beam
+        this is calculated across all control points, but each leaf individually
         :param cp_stat: str in ['min', 'median', 'mean', 'max', 'std'] or None for to get stat for each CP
         If this is not None, then this function is calculated on each CP individually, Then beam_stat is calculated
         across this result.
