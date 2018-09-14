@@ -19,6 +19,13 @@ if speedups.available:
     speedups.enable()
 
 
+STAT_FUNCTION = {'min': np.min,
+                 'mean': np.mean,
+                 'median': np.median,
+                 'max': np.max,
+                 'std': np.std}
+
+
 class Plan:
     def __init__(self, rt_plan_file):
         """
@@ -56,7 +63,10 @@ class FxGroup:
         meter_set = {}
         for ref_beam in fx_grp_seq.ReferencedBeamSequence:
             ref_beam_num = str(ref_beam.ReferencedBeamNumber)
-            meter_set[ref_beam_num] = float(ref_beam.BeamMeterset)
+            if hasattr(ref_beam, 'BeamMeterset'):
+                meter_set[ref_beam_num] = float(ref_beam.BeamMeterset)
+            else:
+                meter_set[ref_beam_num] = 0.
 
         self.beam = []
         for beam_seq in plan_beam_sequences:
@@ -81,73 +91,146 @@ class Beam:
                 self.leaf_boundaries = bld_seq.LeafPositionBoundaries
 
         self.jaws = [get_jaws(cp) for cp in self.control_point]
-        self.aperture = [get_shapely_from_cp(self.leaf_boundaries, cp) for cp in self.control_point]
-        self.mlc_borders = [get_mlc_borders(cp, self.leaf_boundaries) for cp in self.control_point]
+        if hasattr(self, 'leaf_boundaries'):
+            self.aperture = [get_shapely_from_cp(self.leaf_boundaries, cp) for cp in self.control_point]
+            self.mlc_borders = [get_mlc_borders(cp, self.leaf_boundaries) for cp in self.control_point]
 
         self.gantry_angle = [float(cp.GantryAngle) for cp in cp_seq if hasattr(cp, 'GantryAngle')]
         self.collimator_angle = [float(cp.BeamLimitingDeviceAngle) for cp in cp_seq if hasattr(cp, 'BeamLimitingDeviceAngle')]
         self.couch_angle = [float(cp.PatientSupportAngle) for cp in cp_seq if hasattr(cp, 'PatientSupportAngle')]
 
         self.meter_set = meter_set
-        self.control_point_meter_set = np.append([0], np.diff(np.array([cp.cum_mu for cp in self.control_point])))
+        try:
+            self.control_point_meter_set = np.append([0], np.diff(np.array([cp.cum_mu for cp in self.control_point])))
+        except AttributeError:
+            self.control_point_meter_set = [0]
 
         if hasattr(beam_seq, 'BeamDescription'):
             self.name = beam_seq.BeamDescription
         else:
             self.name = beam_seq.BeamName
 
-        cum_mu = [cp.cum_mu * self.meter_set for cp in self.control_point]
-        cp_mu = np.diff(np.array(cum_mu)).tolist() + [0]
-        x_paths = np.array([get_xy_path_lengths(cp)[0] for cp in self.aperture])
-        y_paths = np.array([get_xy_path_lengths(cp)[1] for cp in self.aperture])
-        area = [cp.area for cp in self.aperture]
-        c1, c2 = COMPLEXITY_SCORE_X_WEIGHT, COMPLEXITY_SCORE_Y_WEIGHT
-        complexity_scores = np.divide(np.multiply(np.add(c1*x_paths, c2*y_paths), cp_mu), area)
-        # Complexity score based on:
-        # Younge KC, Matuszak MM, Moran JM, McShan DL, Fraass BA, Roberts DA. Penalization of aperture
-        # complexity in inversely planned volumetric modulated arc therapy. Med Phys. 2012;39(11):7160–70.
+        try:
+            cum_mu = [cp.cum_mu * self.meter_set for cp in self.control_point]
+            cp_mu = np.diff(np.array(cum_mu)).tolist() + [0]
+            x_paths = np.array([get_xy_path_lengths(cp)[0] for cp in self.aperture])
+            y_paths = np.array([get_xy_path_lengths(cp)[1] for cp in self.aperture])
+            area = [cp.area for cp in self.aperture]
+            c1, c2 = COMPLEXITY_SCORE_X_WEIGHT, COMPLEXITY_SCORE_Y_WEIGHT
+            complexity_scores = np.divide(np.multiply(np.add(c1*x_paths, c2*y_paths), cp_mu), area)
+            # Complexity score based on:
+            # Younge KC, Matuszak MM, Moran JM, McShan DL, Fraass BA, Roberts DA. Penalization of aperture
+            # complexity in inversely planned volumetric modulated arc therapy. Med Phys. 2012;39(11):7160–70.
 
-        self.summary = {'cp': range(1, len(self.control_point)+1),
-                        'cum_mu_frac': [cp.cum_mu for cp in self.control_point],
-                        'cum_mu': cum_mu,
-                        'cp_mu': cp_mu,
-                        'gantry': self.gantry_angle,
-                        'collimator': self.collimator_angle,
-                        'couch': self.couch_angle,
-                        'jaw_x1': [j['x_min']/10 for j in self.jaws],
-                        'jaw_x2': [j['x_max']/10 for j in self.jaws],
-                        'jaw_y1': [j['y_min']/10 for j in self.jaws],
-                        'jaw_y2': [j['y_max']/10 for j in self.jaws],
-                        'area': np.divide(area, 100.).tolist(),
-                        'x_perim': np.divide(x_paths, 10.).tolist(),
-                        'y_perim': np.divide(y_paths, 10.).tolist(),
-                        'cmp_score': complexity_scores.tolist()}
+            self.summary = {'cp': range(1, len(self.control_point)+1),
+                            'cum_mu_frac': [cp.cum_mu for cp in self.control_point],
+                            'cum_mu': cum_mu,
+                            'cp_mu': cp_mu,
+                            'gantry': self.gantry_angle,
+                            'collimator': self.collimator_angle,
+                            'couch': self.couch_angle,
+                            'jaw_x1': [j['x_min']/10 for j in self.jaws],
+                            'jaw_x2': [j['x_max']/10 for j in self.jaws],
+                            'jaw_y1': [j['y_min']/10 for j in self.jaws],
+                            'jaw_y2': [j['y_max']/10 for j in self.jaws],
+                            'area': np.divide(area, 100.).tolist(),
+                            'x_perim': np.divide(x_paths, 10.).tolist(),
+                            'y_perim': np.divide(y_paths, 10.).tolist(),
+                            'cmp_score': complexity_scores.tolist()}
 
-        for key in self.summary:
-            if len(self.summary[key]) == 1:
-                self.summary[key] = self.summary[key] * len(self.summary['cp'])
+            for key in self.summary:
+                if len(self.summary[key]) == 1:
+                    self.summary[key] = self.summary[key] * len(self.summary['cp'])
+        except AttributeError:
+            pass
+
+    @property
+    def leaf_travel(self):
+        """
+        Calculates the travel distance since the previous control point, returns a list of numpy arrays
+        :return: A list of numpy 1D arrays per MLC side. One item in list per control point.
+        :rtype: list
+        """
+        travel = {'A': [np.zeros_like(self.control_point[0].mlc[0])],
+                  'B': [np.zeros_like(self.control_point[0].mlc[1])]}
+        control_point_count = len(self.control_point)
+
+        for i in range(control_point_count-1):
+            curr_mlca, curr_mlcb = self.control_point[i].mlc[0], self.control_point[i].mlc[1]
+            next_mlca, next_mlcb = self.control_point[i+1].mlc[0], self.control_point[i+1].mlc[1]
+            travel['A'].append(next_mlca - curr_mlca)
+            travel['B'].append(next_mlcb - curr_mlcb)
+
+        travel_final = travel['A']
+        travel_final.extend(travel['B'])
+
+        return travel_final
+
+    @property
+    def leaf_speed(self):
+        """
+        Calculates the travel distance per gantry degree since the previous control point
+        :return: A list of numpy 1D arrays per MLC side. One item in list per control point.
+        :rtype: list
+        """
+        if len(self.gantry_angle) == len(self.control_point):  # catch non VMAT beams
+            gantry_delta = np.concatenate([[1], np.diff(self.gantry_angle)])  # leaf_travel[key][0] = 0
+            gantry_delta = np.concatenate(([gantry_delta, gantry_delta]))
+
+            leaf_travel = self.leaf_travel  # store to calculate only once
+
+            return [cp / gantry_delta[i] for i, cp in enumerate(leaf_travel)]
+
+        return [0]
+
+    def get_leaf_stats(self, analysis_type='speed', beam_stat='max', cp_stat=None):
+        """
+        Get stats for leaf travel or leaf speed (per degree) by control point or by beam.
+        :param analysis_type: str in ['speed', 'travel']
+        :param beam_stat: str in ['min', 'median', 'mean', 'max', 'std']
+        this is calculated across the entire beam
+        :param cp_stat: str in ['min', 'median', 'mean', 'max', 'std'] or None for to get stat for each CP
+        If this is not None, then this function is calculated on each CP individually, Then beam_stat is calculated
+        across this result.
+        :return: stats for each
+        :rtype: list
+        """
+
+        if not cp_stat:
+            if analysis_type in ['speed', 'travel']:
+                if analysis_type == 'speed':
+                    data = self.leaf_speed  # store to calculate only once
+                else:
+                    data = self.leaf_travel
+
+                return [STAT_FUNCTION[beam_stat](cp) for cp in data]
+        else:
+            stat_by_cp = self.get_leaf_stats(analysis_type=analysis_type, beam_stat=beam_stat)
+
+            return [STAT_FUNCTION[cp_stat](stat_by_cp)]
 
 
 class ControlPoint:
     def __init__(self, cp_seq):
         cp = {'cum_mu': float(cp_seq.CumulativeMetersetWeight)}
-        for device_position_seq in cp_seq.BeamLimitingDevicePositionSequence:
-            leaf_jaw_type = str(device_position_seq.RTBeamLimitingDeviceType).lower()
-            if leaf_jaw_type.startswith('mlc'):
-                cp['leaf_type'] = leaf_jaw_type
-                leaf_jaw_type = 'mlc'
+        if hasattr(cp_seq, 'BeamLimitingDevicePositionSequence'):
+            for device_position_seq in cp_seq.BeamLimitingDevicePositionSequence:
+                leaf_jaw_type = str(device_position_seq.RTBeamLimitingDeviceType).lower()
+                if leaf_jaw_type.startswith('mlc'):
+                    cp['leaf_type'] = leaf_jaw_type
+                    leaf_jaw_type = 'mlc'
 
-            positions = np.array(map(float, device_position_seq.LeafJawPositions))
+                positions = np.array(map(float, device_position_seq.LeafJawPositions))
 
-            pos_count = len(positions)
-            cp[leaf_jaw_type] = [positions[0:pos_count / 2],
-                                 positions[pos_count / 2:pos_count]]
+                pos_count = len(positions)
+                cp[leaf_jaw_type] = [positions[0:pos_count / 2],
+                                     positions[pos_count / 2:pos_count]]
 
-        if 'leaf_type' not in list(cp):
-            cp['leaf_type'] = False
+            if 'leaf_type' not in list(cp):
+                cp['leaf_type'] = False
 
-        for key in cp:
-            setattr(self, key, cp[key])
+            for key in cp:
+                setattr(self, key, cp[key])
 
 
 def get_mlc_borders(control_point, leaf_boundaries):
