@@ -85,6 +85,8 @@ class Beam:
         cp_seq = beam_seq.ControlPointSequence
         self.control_point = [ControlPoint(cp) for cp in cp_seq]
         self.control_point_count = len(self.control_point)
+        if hasattr(self.control_point[0], 'leaf_pair_count'):
+            self.leaf_pair_count = self.control_point[0].leaf_pair_count
 
         for bld_seq in beam_seq.BeamLimitingDeviceSequence:
             if hasattr(bld_seq, 'LeafPositionBoundaries'):
@@ -161,10 +163,9 @@ class Beam:
             travel['A'].append(next_mlca - curr_mlca)
             travel['B'].append(next_mlcb - curr_mlcb)
 
-        travel_final = travel['A']
-        travel_final.extend(travel['B'])
+        travel['A'].extend(travel['B'])
 
-        return travel_final
+        return travel['A']
 
     @property
     def leaf_speed(self):
@@ -173,7 +174,8 @@ class Beam:
         :return: A list of numpy 1D arrays per MLC side. One item in list per control point.
         :rtype: list
         """
-        if len(self.gantry_angle) == len(self.control_point):  # catch non VMAT beams
+
+        if self.gantry_angle[0] != self.gantry_angle[-1]:  # catch non VMAT beams
             gantry_delta = np.concatenate([[1], np.diff(self.gantry_angle)])  # leaf_travel[0] = 0
             gantry_delta = np.concatenate(([gantry_delta, gantry_delta]))  # A and B side
 
@@ -181,31 +183,38 @@ class Beam:
 
         return [0]
 
-    def get_leaf_stats(self, analysis_type='speed', beam_stat='max', cp_stat=None):
+    def get_leaf_stats(self, analysis_type='speed', stat='max'):
         """
-        Get stats for leaf travel or leaf speed (per degree) by control point or by beam.
+        Get stats for leaf travel or leaf speed (per degree)
         :param analysis_type: str in ['speed', 'travel']
-        :param beam_stat: str in ['min', 'median', 'mean', 'max', 'std']
-        this is calculated across all control points, but each leaf individually
-        :param cp_stat: str in ['min', 'median', 'mean', 'max', 'std'] or None for to get stat for each CP
-        If this is not None, then this function is calculated on each CP individually, Then beam_stat is calculated
-        across this result.
-        :return: stats for each
+        :param stat: str in ['min', 'median', 'mean', 'max', 'std']
+        :return: stats for each leaf, first A, then B, in one list
         :rtype: list
         """
 
-        if not cp_stat:
-            if analysis_type in ['speed', 'travel']:
-                if analysis_type == 'speed':
-                    data = self.leaf_speed  # store to calculate only once
-                else:
-                    data = self.leaf_travel
+        if self.gantry_angle[0] == self.gantry_angle[-1]:
+            analysis_type = 'travel'
 
-                return [STAT_FUNCTION[beam_stat](cp) for cp in data]
+        if analysis_type == 'speed':
+            data = self.leaf_speed
         else:
-            stat_by_cp = self.get_leaf_stats(analysis_type=analysis_type, beam_stat=beam_stat)
+            data = self.leaf_travel
 
-            return [STAT_FUNCTION[cp_stat](stat_by_cp)]
+        leaf_data = {}
+        for i, cp in enumerate(data):
+            for leaf in range(self.leaf_pair_count):
+                if i < self.control_point_count:
+                    index = leaf
+                else:
+                    index = leaf + self.leaf_pair_count
+                if index not in list(leaf_data):
+                    leaf_data[index] = []
+                leaf_data[index].append(cp[leaf])
+        leaf_data = [leaf_data[leaf] for leaf in range(self.leaf_pair_count * 2)]
+
+        leaf_stats = [STAT_FUNCTION[stat](np.absolute(ld)) for ld in leaf_data]
+
+        return leaf_stats
 
 
 class ControlPoint:
@@ -229,6 +238,8 @@ class ControlPoint:
 
             for key in cp:
                 setattr(self, key, cp[key])
+
+            self.leaf_pair_count = len(positions) / 2
 
 
 def get_mlc_borders(control_point, leaf_boundaries):

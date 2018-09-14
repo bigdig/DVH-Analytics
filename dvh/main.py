@@ -138,8 +138,9 @@ source_multi_var_model_results_1 = ColumnDataSource(data=dict(model_p=[], model_
 source_multi_var_coeff_results_2 = ColumnDataSource(data=dict(var_name=[], coeff=[], coeff_str=[], p=[], p_str=[]))
 source_multi_var_model_results_2 = ColumnDataSource(data=dict(model_p=[], model_p_str=[],
                                                               r_sq=[], r_sq_str=[], y_var=[]))
-source_mlc_viewer = ColumnDataSource(data=dict(top=[], bottom=[], left=[], right=[], color=[]))
+source_mlc_viewer = ColumnDataSource(data=dict(top=[], bottom=[], left=[], right=[], color=[], leaf=[]))
 source_mlc_summary = ColumnDataSource(data=dict())
+source_mlc_travel = ColumnDataSource(data=dict(leaf=[], min=[], mean=[], median=[], max=[], std=[]))
 
 
 # Categories map of dropdown values, SQL column, and SQL table (and data source for range_categories)
@@ -1748,6 +1749,35 @@ def mlc_analyzer_plan_ticker(attr, old, new):
         mlc_analyzer_fx_grp_select.value = '1'
 
 
+def update_mlc_travel_data():
+    fx_grp = mlc_data.fx_group[int(mlc_analyzer_fx_grp_select.value) - 1]
+    data = fx_grp.beam[int(mlc_analyzer_beam_select.value.split(':')[0]) - 1]
+
+    stat_functions = {'min': np.min,
+                      'median': np.median,
+                      'mean': np.mean,
+                      'max': np.max,
+                      'std': np.std}
+
+    stats = {key: data.get_leaf_stats(stat=key) for key in list(stat_functions)}
+
+    stats['leaf'] = ['Beam']
+    stats['leaf'].extend(["A%s" % (i+1) for i in range(data.leaf_pair_count)])
+    stats['leaf'].extend(["B%s" % (i+1) for i in range(data.leaf_pair_count)])
+
+    leafs_to_ignore = [i for i, v in enumerate(stats['min']) if v == 0 and stats['max'][i] == 0]
+    for key in list(stat_functions):
+        beam_calc_data = [ld for i, ld in enumerate(stats[key]) if i not in leafs_to_ignore]
+        stats[key].insert(0, stat_functions[key](beam_calc_data))
+
+    if data.gantry_angle[0] == data.gantry_angle[-1]:
+        div_mlc_travel.text = "<b>Leaf Travel Data (mm / control point)</b>"
+    else:
+        div_mlc_travel.text = "<b>Leaf Speed Data (mm / degree)</b>"
+
+    source_mlc_travel.data = stats
+
+
 def mlc_analyzer_fx_grp_ticker(attr, old, new):
     update_mlc_analyzer_fx_grp()
     if old == new:
@@ -1767,6 +1797,7 @@ def update_mlc_analyzer_fx_grp():
 def mlc_analyzer_beam_ticker(attr, old, new):
     update_mlc_analyzer_beam()
     update_beam_score()
+    update_mlc_travel_data()
 
 
 def update_beam_score():
@@ -1811,6 +1842,11 @@ def update_mlc_viewer():
     for edge in list(borders):
         borders[edge].extend(beam.mlc_borders[cp_index][edge])
     borders['color'] = [options.JAW_COLOR] * 4 + [options.MLC_COLOR] * len(beam.mlc_borders[cp_index]['top'])
+
+    leafs = ['Jaw1', 'Jaw2', 'Jaw3', 'Jaw4']
+    for side in ['A', 'B']:
+        leafs.extend(["%s%s" % (side, (i + 1)) for i in range(beam.leaf_pair_count)])
+    borders['leaf'] = leafs
 
     source_mlc_viewer.data = borders
 
@@ -3951,6 +3987,9 @@ mlc_viewer_next_cp = Button(label=">", button_type="primary", width=50)
 mlc_viewer_play_button = Button(label="Play", button_type="success", width=100)
 mlc_viewer_beam_score = Div(text="<b>Beam Complexity Score: </b>", width=300)
 
+# mlc_viewer.add_tools(HoverTool(show_arrow=False, line_policy='next',
+#                                tooltips=[('Leaf', '@leaf')]))
+
 columns = [TableColumn(field="cp", title="CP"),
            TableColumn(field="cum_mu_frac", title="Rel MU", formatter=NumberFormatter(format="0.000")),
            TableColumn(field="cum_mu", title="MU", formatter=NumberFormatter(format="0.0")),
@@ -3967,8 +4006,7 @@ columns = [TableColumn(field="cp", title="CP"),
            TableColumn(field="y_perim", title="Y Path", formatter=NumberFormatter(format="0.00")),
            TableColumn(field="cmp_score", title="Score", formatter=NumberFormatter(format="0.000"))]
 mlc_viewer_data_table = DataTable(source=source_mlc_summary, columns=columns,
-                                  editable=False, width=700, height=425)
-mlc_viewer_data_table.index_position = None
+                                  editable=False, width=700, height=425, index_position=None)
 
 mlc_viewer_previous_cp.on_click(mlc_viewer_go_to_previous_cp)
 mlc_viewer_next_cp.on_click(mlc_viewer_go_to_next_cp)
@@ -3979,6 +4017,16 @@ mlc_viewer.x_range = Range1d(-options.MAX_FIELD_SIZE_X/2, options.MAX_FIELD_SIZE
 mlc_viewer.y_range = Range1d(-options.MAX_FIELD_SIZE_Y/2, options.MAX_FIELD_SIZE_Y/2)
 mlc_viewer.xgrid.grid_line_color = None
 mlc_viewer.ygrid.grid_line_color = None
+
+columns = [TableColumn(field='leaf', title='Leaf'),
+           TableColumn(field='min', title='Min', formatter=NumberFormatter(format="0.00")),
+           TableColumn(field='mean', title='Mean', formatter=NumberFormatter(format="0.00")),
+           TableColumn(field='median', title='Median', formatter=NumberFormatter(format="0.00")),
+           TableColumn(field='max', title='Max', formatter=NumberFormatter(format="0.00")),
+           TableColumn(field='std', title='Std. Dev.', formatter=NumberFormatter(format="0.00"))]
+mlc_travel_data_table = DataTable(source=source_mlc_travel, columns=columns,
+                                  editable=False, index_position=None)
+div_mlc_travel = Div(text="<b>Leaf Speed Data</b>")
 
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # Layout objects
@@ -4094,7 +4142,10 @@ layout_mlc_analyzer = column(row(custom_title_mlc_analyzer_blue, Spacer(width=50
                              row(mlc_analyzer_fx_grp_select, mlc_analyzer_beam_select,
                                  mlc_viewer_previous_cp, mlc_viewer_next_cp,
                                  Spacer(width=10), mlc_viewer_play_button, Spacer(width=10), mlc_viewer_beam_score),
-                             row(mlc_viewer, mlc_viewer_data_table))
+                             row(mlc_viewer, mlc_viewer_data_table),
+                             Div(text="<hr>", width=800),
+                             div_mlc_travel,
+                             mlc_travel_data_table)
 
 query_tab = Panel(child=layout_query, title='Query')
 dvh_tab = Panel(child=layout_dvhs, title='DVHs')
